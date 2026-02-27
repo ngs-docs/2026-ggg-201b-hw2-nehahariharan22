@@ -1,43 +1,56 @@
+
 rule all:
     input:
-        "SRR2584857_quast.4000000",
-        "SRR2584857_annot.4000000",
+        "SRR2584857_quast.1000000",
+        "SRR2584857_annot.1000000",
+        "SRR2584857_quast.3000000",
+        "SRR2584857_annot.3000000",
+        "SRR2584857_quast.5000000",
+        "SRR2584857_annot.5000000"
+
 
 rule subset_reads:
     input:
-        "{sample}.fastq.gz",
+        r1 = "SRR2584857_1.fastq.gz",
+        r2 = "SRR2584857_2.fastq.gz"
     output:
-        "{sample}.{subset,\d+}.fastq.gz"
-    shell: """
-        gunzip -c {input} | head -{wildcards.subset} | gzip -9c > {output} || true
-    """
+        r1 = "SRR2584857_1.sub.{sublines}.fastq",
+        r2 = "SRR2584857_2.sub.{sublines}.fastq"
+    shell:
+        """
+        zcat {input.r1} | head -n {wildcards.sublines} > {output.r1} || [[ $? -eq 141 ]]
+        zcat {input.r2} | head -n {wildcards.sublines} > {output.r2} || [[ $? -eq 141 ]]
+        """
 
-rule annotate:
+rule assemble_subset:
     input:
-        "SRR2584857-assembly.{subset}.fa"
+        r1 = "SRR2584857_1.sub.{sublines}.fastq",
+        r2 = "SRR2584857_2.sub.{sublines}.fastq"
     output:
-        directory("SRR2584857_annot.{subset}")
-    shell: """
-       prokka --prefix {output} {input}                                       
-    """
+        directory("SRR2584857_assembly.{sublines}")
+    threads: 8
+    conda: "megahit"
+    shell:
+        "megahit -1 {input.r1} -2 {input.r2} -f -t {threads} -o {output}"
 
-rule assemble:
-    input:
-        r1 = "SRR2584857_1.{subset}.fastq.gz",
-        r2 = "SRR2584857_2.{subset}.fastq.gz"
-    output:
-        dir = directory("SRR2584857_assembly.{subset}"),
-        assembly = "SRR2584857-assembly.{subset}.fa"
-    shell: """
-       megahit -1 {input.r1} -2 {input.r2} -f -m 5e9 -t 4 -o {output.dir}     
-       cp {output.dir}/final.contigs.fa {output.assembly}                     
-    """
+rule get_contigs:
+    input: "SRR2584857_assembly.{sublines}"
+    output: "SRR2584857-assembly.{sublines}.fa"
+    shell:
+        "cp {input}/final.contigs.fa {output}"
 
-rule quast:
-    input:
-        "SRR2584857-assembly.{subset}.fa"
-    output:
-        directory("SRR2584857_quast.{subset}")
-    shell: """                                                                
-       quast {input} -o {output}                                              
-    """
+rule quast_subset:
+    input: "SRR2584857-assembly.{sublines}.fa"
+    output: directory("SRR2584857_quast.{sublines}")
+    threads: 4
+    conda: "megahit"
+    shell:
+        "quast {input} -o {output} --threads {threads}"
+
+rule prokka_subset:
+    input: "SRR2584857-assembly.{sublines}.fa"
+    output: directory("SRR2584857_annot.{sublines}")
+    threads: 4
+    conda: "prokka"
+    shell:
+        "prokka --outdir {output} --prefix subset_{wildcards.sublines} {input} --cpus {threads}"
